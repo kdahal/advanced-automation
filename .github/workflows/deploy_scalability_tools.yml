@@ -1,0 +1,63 @@
+name: Deploy Scalability Tools
+
+on:
+  push:
+    paths:
+      - 'scalability-tools/**'
+  workflow_dispatch:
+
+jobs:
+  unit-integration-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 1  # Optimize by performing a shallow clone to avoid fetching large files
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip cache dir > /dev/null || mkdir -p $HOME/.cache/pip
+          if [ -f scalability-tools/requirements.txt ]; then
+              pip install --cache-dir $HOME/.cache/pip -r scalability-tools/requirements.txt
+          else
+              echo "Requirements file not found! Exiting." && exit 1
+          fi
+
+      - name: Run unit tests
+        run: |
+          cd scalability-tools
+          ./build.bash run_unit_tests --parallel || {
+              echo "Unit tests encountered issues in parallel execution. Consider reviewing test isolation or dependencies.";
+              exit 1;
+          }
+
+      - name: Run integration tests
+        run: |
+          cd scalability-tools
+          ./build.bash run_integration_tests
+
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 1  # Optimize by performing a shallow clone to avoid fetching large files
+
+      - name: Trigger standalone deploy script
+        run: |
+          cd scalability-tools
+          set -e
+          trap '{ echo "Cleanup: Reverting partial deployment."; ./standalone_deploy.sh rollback; }' ERR
+          ./standalone_deploy.sh dev || { echo "Deployment to dev failed. Check logs for details and ensure network connectivity or script permissions are correct."; exit 1; }
+          ./standalone_deploy.sh test || { echo "Deployment to test failed. Check logs for details and ensure configurations are correct."; exit 1; }
+          trap - ERR
